@@ -1,12 +1,20 @@
 # config.py
 
 import torch
+import platform
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+# 自动判断数据集路径
+if platform.system() == 'Windows':
+    DATA_PATH = "D:\\Dataset\\2018.01\\GOLD_XYZ_OSC.0001_1024.hdf5"
+else:
+    # Linux 服务器路径
+    DATA_PATH = "/root/autodl-tmp/GOLD_XYZ_OSC.0001_1024.hdf5"
+
 CONFIG = {
     # --- 数据与路径 ---
-    "data_path": "D:\\Dataset\\2018.01\\GOLD_XYZ_OSC.0001_1024.hdf5",  # RML2018数据集路径
+    "data_path": DATA_PATH,  # RML2018数据集路径
     "diffusion_model_path": "conditional_diffusion_model_2018.pth",
 
     # --- 模型参数 ---

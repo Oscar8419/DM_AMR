@@ -68,7 +68,7 @@ class ResBlock(nn.Module):
 class ConditionalUNet1D(nn.Module):
     def __init__(self, signal_length: int = CONFIG["signal_length"], num_classes: int = CONFIG["num_classes"]):
         super().__init__()
-        dim = 64
+        dim = 64  # TODO: ? hardcode
         self.time_mlp = nn.Sequential(SinusoidalPositionEmbeddings(
             dim), nn.Linear(dim, dim * 4), nn.SiLU(), nn.Linear(dim * 4, dim * 4))
         self.class_emb = nn.Embedding(num_classes, dim * 4)
@@ -80,28 +80,42 @@ class ConditionalUNet1D(nn.Module):
         self.mid1 = ResBlock(256, 256, dim * 4, dim * 4)
         self.mid2 = ResBlock(256, 256, dim * 4, dim * 4)
         self.up_conv1 = nn.ConvTranspose1d(256, 128, 4, stride=2, padding=1)
-        self.up1 = ResBlock(256, 128, dim * 4, dim * 4)
+        # Fix: input channels = 128 (from up_conv1) + 256 (from h2 skip connection) = 384
+        self.up1 = ResBlock(384, 128, dim * 4, dim * 4)
         self.up_conv2 = nn.ConvTranspose1d(128, 64, 4, stride=2, padding=1)
-        self.up2 = ResBlock(128, 64, dim * 4, dim * 4)
+        # Fix: input channels = 64 (from up_conv2) + 128 (from h1 skip connection) = 192
+        self.up2 = ResBlock(192, 64, dim * 4, dim * 4)
         self.final_conv = nn.Conv1d(dim, 2, 1)
 
     def forward(self, x: torch.Tensor, time: torch.Tensor, classes: torch.Tensor) -> torch.Tensor:
-        t_emb = self.time_mlp(time)
-        c_emb = self.class_emb(classes)
-        x = self.init_conv(x)
-        h1 = self.down1(x, t_emb, c_emb)
-        h1_down = self.down_conv1(h1)
-        h2 = self.down2(h1_down, t_emb, c_emb)
-        h2_down = self.down_conv2(h2)
-        mid = self.mid1(h2_down, t_emb, c_emb)
-        mid = self.mid2(mid, t_emb, c_emb)
-        up1 = self.up_conv1(mid)
-        up1 = torch.cat([up1, h2], dim=1)
-        up1 = self.up1(up1, t_emb, c_emb)
-        up2 = self.up_conv2(up1)
+        # x: (B, 2, 1024)
+        t_emb = self.time_mlp(time)       # (B, dim*4) -> (B, 256)
+        c_emb = self.class_emb(classes)   # (B, dim*4) -> (B, 256)
+
+        x = self.init_conv(x)             # (B, 64, 1024)
+
+        # Downsample
+        h1 = self.down1(x, t_emb, c_emb)  # (B, 128, 1024)
+        h1_down = self.down_conv1(h1)     # (B, 128, 512)
+
+        h2 = self.down2(h1_down, t_emb, c_emb)  # (B, 256, 512)
+        h2_down = self.down_conv2(h2)     # (B, 256, 256)
+
+        # Middle
+        mid = self.mid1(h2_down, t_emb, c_emb)  # (B, 256, 256)
+        mid = self.mid2(mid, t_emb, c_emb)     # (B, 256, 256)
+
+        # Upsample
+        up1 = self.up_conv1(mid)          # (B, 128, 512)
+        up1 = torch.cat([up1, h2], dim=1)  # (B, 128+256, 512) -> (B, 384, 512)
+        up1 = self.up1(up1, t_emb, c_emb)  # (B, 128, 512)
+
+        up2 = self.up_conv2(up1)          # (B, 64, 1024)
+        # (B, 64+128, 1024) -> (B, 192, 1024)
         up2 = torch.cat([up2, h1], dim=1)
-        up2 = self.up2(up2, t_emb, c_emb)
-        return self.final_conv(up2)
+        up2 = self.up2(up2, t_emb, c_emb)  # (B, 64, 1024)
+
+        return self.final_conv(up2)       # (B, 2, 1024)
 
 
 class CNNClassifier(nn.Module):
