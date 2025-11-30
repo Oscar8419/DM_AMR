@@ -27,6 +27,7 @@ def main():
             # logging.StreamHandler()
         ]
     )
+    logging.info("="*30)
     logging.info("Starting main process...")
 
     # 创建带有时间戳的检查点目录，防止覆盖
@@ -43,21 +44,21 @@ def main():
     (X_train, y_train, snr_train), (X_test, y_test, snr_test), class_map = load_and_preprocess_data(
         CONFIG["data_path"], train_fraction=train_frac)
 
-    # 1. 准备扩散模型训练数据：仅使用高信噪比 (SNR >= dB)
+    # 1. 准备扩散模型训练数据：仅使用高信噪比 (SNR >= x dB)
     high_snr_mask = snr_train >= CONFIG["diffusion_snr_start"]
     diffusion_train_dataset = TensorDataset(
         X_train[high_snr_mask], y_train[high_snr_mask])
     diffusion_train_loader = DataLoader(
         diffusion_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True)
     logging.info(
-        f"Diffusion Training Data (SNR>=0dB): {len(diffusion_train_dataset)} samples")
+        f"Diffusion Training Data (SNR>={CONFIG['diffusion_snr_start']} dB): {len(diffusion_train_dataset)} samples")
 
-    # 2. 准备基线分类器训练数据：使用全量数据 (All SNR)
+    # 2. 准备基线分类器训练数据：使用全量数据 (SNR in [min_snr, max_snr])
     baseline_train_dataset = TensorDataset(X_train, y_train)
     baseline_train_loader = DataLoader(
         baseline_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True)
     logging.info(
-        f"Baseline Classifier Training Data (All SNR): {len(baseline_train_dataset)} samples")
+        f"Baseline Classifier Training Data SNR in [{CONFIG['data_min_snr']}, {CONFIG['data_max_snr']}]: {len(baseline_train_dataset)} samples")
 
     # 3. 准备测试数据：使用全量数据
     test_dataset = TensorDataset(X_test, y_test)
