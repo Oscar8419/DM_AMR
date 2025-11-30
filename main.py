@@ -93,7 +93,13 @@ def main():
             baseline_classifier, baseline_train_loader, baseline_optimizer, criterion)
         logging.info(
             f"Baseline Epoch {epoch+1}/{CONFIG['epochs_classifier']}, Loss: {loss:.4f}")
-        # TODO: save model every 5 epochs
+
+        if (epoch + 1) % 5 == 0 or (epoch + 1) == CONFIG["epochs_classifier"]:
+            checkpoint_path = os.path.join(
+                run_checkpoint_dir, f"baseline_classifier_epoch_{epoch+1}.pth")
+            torch.save(baseline_classifier.state_dict(), checkpoint_path)
+            logging.info(
+                f"Saved baseline classifier checkpoint to {checkpoint_path}")
     baseline_accuracy = evaluate_classifier(baseline_classifier, test_loader)
 
     # Step D: 生成、筛选并创建增强数据集
@@ -106,31 +112,39 @@ def main():
         logging.info(
             f"Generating samples for class: {class_name} ({class_idx})")
 
-        # 1. 构造条件标签张量
-        # 创建一个长度为 num_generated_samples_per_class 的张量，所有元素都填充为当前类别的索引 class_idx
-        # 这告诉扩散模型："请生成这一批数据，且它们都属于当前这个特定的类别"
-        labels_to_gen = torch.full(
-            (CONFIG["num_generated_samples_per_class"],), class_idx, device=DEVICE, dtype=torch.long)
+        # 分批生成以避免显存溢出 (OOM)
+        total_samples = CONFIG["num_generated_samples_per_class"]
+        gen_batch_size = CONFIG["batch_size"]  # 使用训练时的 batch_size，确保显存安全
+        num_batches = int(np.ceil(total_samples / gen_batch_size))
+        class_filtered_count = 0
 
-        # 2. 执行反向扩散采样
-        # 调用 diffusion_process.sample 启动生成过程
-        # 输入：训练好的模型、生成数量、条件标签
-        # 输出：生成的合成信号样本 new_samples
-        new_samples = diffusion_process.sample(
-            diffusion_model, CONFIG["num_generated_samples_per_class"], labels_to_gen)
+        for i in range(num_batches):
+            # current_batch_size = min(
+            #     gen_batch_size, total_samples - i * gen_batch_size)
 
-        with torch.no_grad():
-            preds = baseline_classifier(new_samples)
-            probs = F.softmax(preds, dim=1)
-            confidences, pred_classes = torch.max(probs, 1)
-            mask = (pred_classes == class_idx) & (
-                confidences >= CONFIG["confidence_threshold"])
-            filtered_samples = new_samples[mask]
+            # 1. 构造条件标签张量
+            labels_to_gen = torch.full(
+                (gen_batch_size,), class_idx, device=DEVICE, dtype=torch.long)
 
-            logging.info(
-                f"  - Generated {len(new_samples)}, Filtered to {len(filtered_samples)} high-confidence samples.")
-            generated_signals.append(filtered_samples.cpu())
-            generated_labels.extend([class_idx] * len(filtered_samples))
+            # 2. 执行反向扩散采样
+            # 这里的 sample 函数内部通常已经包含了 no_grad，但为了保险起见，分批处理
+            batch_samples = diffusion_process.sample(
+                diffusion_model, gen_batch_size, labels_to_gen)
+
+            with torch.no_grad():
+                preds = baseline_classifier(batch_samples)
+                probs = F.softmax(preds, dim=1)
+                confidences, pred_classes = torch.max(probs, 1)
+                mask = (pred_classes == class_idx) & (
+                    confidences >= CONFIG["confidence_threshold"])
+                filtered_samples = batch_samples[mask]
+
+                generated_signals.append(filtered_samples.cpu())
+                generated_labels.extend([class_idx] * len(filtered_samples))
+                class_filtered_count += len(filtered_samples)
+
+        logging.info(
+            f"  - Generated {total_samples}, Filtered to {class_filtered_count} high-confidence samples.")
 
     # 保存生成的样本到磁盘
     if len(generated_signals) > 0:
