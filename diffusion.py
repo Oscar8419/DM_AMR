@@ -76,6 +76,7 @@ class DiffusionProcess:
         shape = (num_samples, 2, CONFIG["signal_length"])
         img = torch.randn(shape, device=DEVICE)
 
+        #TODO: remove this tqdm 
         for i in tqdm(reversed(range(0, self.timesteps)), desc="Sampling", total=self.timesteps):
             t_tensor = torch.full(
                 (num_samples,), i, device=DEVICE, dtype=torch.long)

@@ -49,14 +49,14 @@ def main():
     diffusion_train_dataset = TensorDataset(
         X_train[high_snr_mask], y_train[high_snr_mask])
     diffusion_train_loader = DataLoader(
-        diffusion_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True)
+        diffusion_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True,num_workers=4, pin_memory=True)
     logging.info(
         f"Diffusion Training Data (SNR>={CONFIG['diffusion_snr_start']} dB): {len(diffusion_train_dataset)} samples")
 
     # 2. 准备基线分类器训练数据：使用全量数据 (SNR in [min_snr, max_snr])
     baseline_train_dataset = TensorDataset(X_train, y_train)
     baseline_train_loader = DataLoader(
-        baseline_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True)
+        baseline_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True,num_workers=4, pin_memory=True)
     logging.info(
         f"Baseline Classifier Training Data SNR in [{CONFIG['data_min_snr']}, {CONFIG['data_max_snr']}]: {len(baseline_train_dataset)} samples")
 
@@ -68,6 +68,8 @@ def main():
     # Step B: 训练或加载扩散模型
     diffusion_model_path = CONFIG["diffusion_model_path"]
     diffusion_model = ConditionalUNet1D().to(DEVICE)
+    diffusion_model_path = "/root/code/DM_AMR/checkpoints/11-30--13-41/diffusion_epoch_10.pth"
+    run_checkpoint_dir = "/root/code/DM_AMR/checkpoints/11-30--13-41/"
 
     if not os.path.exists(diffusion_model_path):
         diffusion_optimizer = torch.optim.Adam(
@@ -118,9 +120,8 @@ def main():
         num_batches = int(np.ceil(total_samples / gen_batch_size))
         class_filtered_count = 0
 
+        #TODO: add tqdm for generation progress bar
         for i in range(num_batches):
-            # current_batch_size = min(
-            #     gen_batch_size, total_samples - i * gen_batch_size)
 
             # 1. 构造条件标签张量
             labels_to_gen = torch.full(
@@ -142,6 +143,7 @@ def main():
                 generated_signals.append(filtered_samples.cpu())
                 generated_labels.extend([class_idx] * len(filtered_samples))
                 class_filtered_count += len(filtered_samples)
+                #TODO: save every class's generated samples
 
         logging.info(
             f"  - Generated {total_samples}, Filtered to {class_filtered_count} high-confidence samples.")
@@ -176,7 +178,7 @@ def main():
     augmented_signals = torch.cat([X_train, all_gen_signals])
     augmented_labels = torch.cat([y_train, all_gen_labels])
     augmented_loader = DataLoader(TensorDataset(
-        augmented_signals, augmented_labels), batch_size=CONFIG["batch_size"], shuffle=True)
+        augmented_signals, augmented_labels), batch_size=CONFIG["batch_size"], shuffle=True,num_workers=4, pin_memory=True)
 
     # Step E: 训练并评估增强后的分类器
     logging.info("\n--- Training Augmented Classifier ---")
