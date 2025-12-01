@@ -18,6 +18,8 @@ from trainer import train_diffusion, train_classifier, evaluate_classifier
 
 
 def main():
+    torch.manual_seed(42)
+    np.random.seed(42)
     # 配置 logging
     logging.basicConfig(
         level=logging.INFO,
@@ -91,7 +93,7 @@ def main():
     baseline_optimizer = torch.optim.Adam(
         baseline_classifier.parameters(), lr=CONFIG["learning_rate"])
     criterion = nn.CrossEntropyLoss()
-    for epoch in range(CONFIG["epochs_classifier"]):
+    for epoch in tqdm(range(CONFIG["epochs_classifier"]), desc="Training Baseline Classifier", leave=False):
         loss = train_classifier(
             baseline_classifier, baseline_train_loader, baseline_optimizer, criterion)
         logging.info(
@@ -117,7 +119,7 @@ def main():
 
         # 分批生成以避免显存溢出 (OOM)
         total_samples = CONFIG["num_generated_samples_per_class"]
-        gen_batch_size = CONFIG["batch_size"]  # 使用训练时的 batch_size，确保显存安全
+        gen_batch_size = CONFIG["diffusion_gene_batch_size"]  
         num_batches = int(np.ceil(total_samples / gen_batch_size))
         class_filtered_count = 0
 
@@ -205,7 +207,7 @@ def main():
     augmented_optimizer = torch.optim.Adam(
         augmented_classifier.parameters(), lr=CONFIG["learning_rate"])
 
-    for epoch in range(CONFIG["epochs_classifier"]):
+    for epoch in tqdm(range(CONFIG["epochs_classifier"]), desc="Training Augmented Classifier", leave=False):
         loss = train_classifier(
             augmented_classifier, augmented_loader, augmented_optimizer, criterion)
         logging.info(

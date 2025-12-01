@@ -27,7 +27,8 @@ CONFIG = {
     # --- 训练参数 ---
     "epochs_diffusion": 10,         # 训练扩散模型的轮数
     "epochs_classifier": 30,        # 训练分类器的轮数
-    "batch_size": 64*4,               # 信号变长了，适当减小batch_size防止显存溢出
+    "batch_size": 64*64,               # 训练baseline分类器的batch size
+    "diffusion_gene_batch_size": 64*10,      # 扩散模型生成时候的batch size
     "learning_rate": 1e-3,
 
     # --- 数据增强与评估参数 ---

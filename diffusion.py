@@ -71,6 +71,7 @@ class DiffusionProcess:
             noise = torch.randn_like(x)
             return model_mean + torch.sqrt(posterior_variance_t) * noise
 
+    #TODO: use DDIM
     @torch.no_grad()
     def sample(self, model: nn.Module, num_samples: int, classes: torch.Tensor) -> torch.Tensor:
         shape = (num_samples, 2, CONFIG["signal_length"])
