@@ -8,6 +8,7 @@ import numpy as np
 from datetime import datetime
 from torch.utils.data import TensorDataset, DataLoader
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from config import CONFIG, DEVICE
 from data_loader import load_and_preprocess_data
@@ -49,14 +50,14 @@ def main():
     diffusion_train_dataset = TensorDataset(
         X_train[high_snr_mask], y_train[high_snr_mask])
     diffusion_train_loader = DataLoader(
-        diffusion_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True,num_workers=4, pin_memory=True)
+        diffusion_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True, num_workers=4, pin_memory=True)
     logging.info(
         f"Diffusion Training Data (SNR>={CONFIG['diffusion_snr_start']} dB): {len(diffusion_train_dataset)} samples")
 
     # 2. 准备基线分类器训练数据：使用全量数据 (SNR in [min_snr, max_snr])
     baseline_train_dataset = TensorDataset(X_train, y_train)
     baseline_train_loader = DataLoader(
-        baseline_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True,num_workers=4, pin_memory=True)
+        baseline_train_dataset, batch_size=CONFIG["batch_size"], shuffle=True, num_workers=4, pin_memory=True)
     logging.info(
         f"Baseline Classifier Training Data SNR in [{CONFIG['data_min_snr']}, {CONFIG['data_max_snr']}]: {len(baseline_train_dataset)} samples")
 
@@ -120,8 +121,10 @@ def main():
         num_batches = int(np.ceil(total_samples / gen_batch_size))
         class_filtered_count = 0
 
-        #TODO: add tqdm for generation progress bar
-        for i in range(num_batches):
+        current_class_signals = []  # 暂存当前类别的生成结果
+
+        # 使用 tqdm 添加生成进度条
+        for i in tqdm(range(num_batches), desc=f"Generating for {class_name}"):
 
             # 1. 构造条件标签张量
             labels_to_gen = torch.full(
@@ -140,13 +143,29 @@ def main():
                     confidences >= CONFIG["confidence_threshold"])
                 filtered_samples = batch_samples[mask]
 
-                generated_signals.append(filtered_samples.cpu())
-                generated_labels.extend([class_idx] * len(filtered_samples))
-                class_filtered_count += len(filtered_samples)
-                #TODO: save every class's generated samples
+                if len(filtered_samples) > 0:
+                    current_class_signals.append(filtered_samples.cpu())
+                    class_filtered_count += len(filtered_samples)
 
         logging.info(
             f"  - Generated {total_samples}, Filtered to {class_filtered_count} high-confidence samples.")
+
+        # 保存当前类别的样本
+        if len(current_class_signals) > 0:
+            class_signals_tensor = torch.cat(current_class_signals, dim=0)
+            class_labels_tensor = torch.full(
+                (len(class_signals_tensor),), class_idx, dtype=torch.long)
+
+            class_save_path = os.path.join(
+                run_checkpoint_dir, f"generated_class_{class_idx}_{class_name}.pt")
+            torch.save({
+                'signals': class_signals_tensor,
+                'labels': class_labels_tensor
+            }, class_save_path)
+
+            # 添加到总列表
+            generated_signals.extend(current_class_signals)
+            generated_labels.extend([class_idx] * len(class_signals_tensor))
 
     # 保存生成的样本到磁盘
     if len(generated_signals) > 0:
@@ -178,7 +197,7 @@ def main():
     augmented_signals = torch.cat([X_train, all_gen_signals])
     augmented_labels = torch.cat([y_train, all_gen_labels])
     augmented_loader = DataLoader(TensorDataset(
-        augmented_signals, augmented_labels), batch_size=CONFIG["batch_size"], shuffle=True,num_workers=4, pin_memory=True)
+        augmented_signals, augmented_labels), batch_size=CONFIG["batch_size"], shuffle=True, num_workers=4, pin_memory=True)
 
     # Step E: 训练并评估增强后的分类器
     logging.info("\n--- Training Augmented Classifier ---")
