@@ -71,9 +71,8 @@ class DiffusionProcess:
             noise = torch.randn_like(x)
             return model_mean + torch.sqrt(posterior_variance_t) * noise
 
-    #TODO: use DDIM
     @torch.no_grad()
-    def sample(self, model: nn.Module, num_samples: int, classes: torch.Tensor) -> torch.Tensor:
+    def sample_ddpm(self, model: nn.Module, num_samples: int, classes: torch.Tensor) -> torch.Tensor:
         shape = (num_samples, 2, CONFIG["signal_length"])
         img = torch.randn(shape, device=DEVICE)
 
@@ -81,4 +80,55 @@ class DiffusionProcess:
             t_tensor = torch.full(
                 (num_samples,), i, device=DEVICE, dtype=torch.long)
             img = self.p_sample(model, img, t_tensor, classes)
+        return img
+
+    @torch.no_grad()
+    def sample_ddim(self, model: nn.Module, num_samples: int, classes: torch.Tensor, ddim_timesteps: int = CONFIG["ddim_timesteps"], eta: float = CONFIG["ddim_eta"]) -> torch.Tensor:
+        """
+        DDIM Sampling.
+        Args:
+            ddim_timesteps: Number of steps for DDIM sampling (e.g., 50 or 100).
+            eta: 0.0 for deterministic DDIM, 1.0 for DDPM-like stochasticity.
+        """
+        shape = (num_samples, 2, CONFIG["signal_length"])
+        img = torch.randn(shape, device=DEVICE)
+
+        # 生成时间步序列 (e.g., [0, 20, 40, ..., 980])
+        # 使用简单的均匀间隔采样
+        c = self.timesteps // ddim_timesteps
+        time_steps = list(range(0, self.timesteps, c)) + [self.timesteps - 1]
+        # 确保只取 ddim_timesteps 个点，并反转顺序
+        time_steps = time_steps[:ddim_timesteps]
+        time_steps = list(reversed(time_steps))
+
+        for i in tqdm(range(len(time_steps)), desc="DDIM Sampling", total=len(time_steps), leave=False):
+            t = time_steps[i]
+            prev_t = time_steps[i+1] if i < len(time_steps) - 1 else -1
+
+            t_tensor = torch.full(
+                (num_samples,), t, device=DEVICE, dtype=torch.long)
+
+            # 1. 预测噪声
+            noise_pred = model(img, t_tensor, classes)
+
+            # 2. 计算 alpha_bar
+            alpha_bar_t = self.alphas_cumprod[t]
+            alpha_bar_prev = self.alphas_cumprod[prev_t] if prev_t >= 0 else torch.tensor(
+                1.0, device=DEVICE)
+
+            # 3. 预测 x0 (denoised)
+            # x0 = (xt - sqrt(1-alpha_bar_t) * noise_pred) / sqrt(alpha_bar_t)
+            pred_x0 = (img - torch.sqrt(1 - alpha_bar_t) *
+                       noise_pred) / torch.sqrt(alpha_bar_t)
+
+            # 4. 计算方向指向 xt (direction pointing to xt)
+            sigma_t = eta * torch.sqrt((1 - alpha_bar_prev) /
+                                       (1 - alpha_bar_t) * (1 - alpha_bar_t / alpha_bar_prev))
+            dir_xt = torch.sqrt(1 - alpha_bar_prev - sigma_t**2) * noise_pred
+
+            # 5. 更新 x (x_{t-1})
+            noise = torch.randn_like(img) if eta > 0 else 0.
+            img = torch.sqrt(alpha_bar_prev) * pred_x0 + \
+                dir_xt + sigma_t * noise
+
         return img

@@ -119,7 +119,7 @@ def main():
 
         # 分批生成以避免显存溢出 (OOM)
         total_samples = CONFIG["num_generated_samples_per_class"]
-        gen_batch_size = CONFIG["diffusion_gene_batch_size"]  
+        gen_batch_size = CONFIG["diffusion_gene_batch_size"]
         num_batches = int(np.ceil(total_samples / gen_batch_size))
         class_filtered_count = 0
 
@@ -132,9 +132,8 @@ def main():
             labels_to_gen = torch.full(
                 (gen_batch_size,), class_idx, device=DEVICE, dtype=torch.long)
 
-            # 2. 执行反向扩散采样
-            # 这里的 sample 函数内部通常已经包含了 no_grad，但为了保险起见，分批处理
-            batch_samples = diffusion_process.sample(
+            # 2. 执行反向扩散采样, ddim OR ddpm
+            batch_samples = diffusion_process.sample_ddim(
                 diffusion_model, gen_batch_size, labels_to_gen)
 
             with torch.no_grad():

@@ -22,7 +22,9 @@ CONFIG = {
     "signal_length": 1024,          # 信号长度为1024
 
     # --- 扩散模型参数 ---
-    "timesteps": 200,               # 扩散步数 (T)
+    "timesteps": 200,               # DDPM采样步数 (T)
+    "ddim_timesteps": 50,           # DDIM采样步数
+    "ddim_eta": 0.0,                # DDIM的eta参数，0.0表示确定性采样
 
     # --- 训练参数 ---
     "epochs_diffusion": 10,         # 训练扩散模型的轮数
