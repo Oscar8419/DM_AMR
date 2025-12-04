@@ -14,7 +14,8 @@ from config import CONFIG, DEVICE
 from data_loader import load_and_preprocess_data
 from models import ConditionalUNet1D, CNNClassifier
 from diffusion import DiffusionProcess
-from trainer import train_diffusion, train_classifier, evaluate_classifier
+from trainer import train_diffusion, run_classifier_pipeline
+from utils import generate_augmented_dataset
 
 
 def main():
@@ -90,110 +91,20 @@ def main():
     # Step C: 训练并评估基线分类器
     logging.info("\n--- Training Baseline Classifier (on original data) ---")
     baseline_classifier = CNNClassifier().to(DEVICE)
-    baseline_optimizer = torch.optim.Adam(
-        baseline_classifier.parameters(), lr=CONFIG["learning_rate"])
-    criterion = nn.CrossEntropyLoss()
-    for epoch in tqdm(range(CONFIG["epochs_classifier"]), desc="Training Baseline Classifier", leave=False):
-        loss = train_classifier(
-            baseline_classifier, baseline_train_loader, baseline_optimizer, criterion)
-        logging.info(
-            f"Baseline Epoch {epoch+1}/{CONFIG['epochs_classifier']}, Loss: {loss:.4f}")
-
-        if (epoch + 1) % 10 == 0 or (epoch + 1) == CONFIG["epochs_classifier"]:
-            checkpoint_path = os.path.join(
-                run_checkpoint_dir, f"baseline_classifier_epoch_{epoch+1}.pth")
-            torch.save(baseline_classifier.state_dict(), checkpoint_path)
-            logging.info(
-                f"Saved baseline classifier checkpoint to {checkpoint_path}")
-    baseline_accuracy = evaluate_classifier(baseline_classifier, test_loader)
+    baseline_accuracy = run_classifier_pipeline(
+        baseline_classifier,
+        baseline_train_loader,
+        test_loader,
+        CONFIG["epochs_classifier"],
+        CONFIG["learning_rate"],
+        run_checkpoint_dir,
+        "baseline_classifier"
+    )
+    logging.info(f"Baseline Classifier Accuracy: {baseline_accuracy:.2f}%")
 
     # Step D: 生成、筛选并创建增强数据集
-    logging.info(
-        "\n--- Generating and Filtering New Samples for Augmentation ---")
-    diffusion_process = DiffusionProcess()
-    generated_signals, generated_labels = [], []
-
-    for class_idx, class_name in enumerate(sorted(class_map, key=class_map.get)):
-        logging.info(
-            f"Generating samples for class: {class_name} ({class_idx})")
-
-        # 分批生成以避免显存溢出 (OOM)
-        total_samples = CONFIG["num_generated_samples_per_class"]
-        gen_batch_size = CONFIG["diffusion_gene_batch_size"]
-        num_batches = int(np.ceil(total_samples / gen_batch_size))
-        class_filtered_count = 0
-
-        current_class_signals = []  # 暂存当前类别的生成结果
-
-        # 使用 tqdm 添加生成进度条
-        for i in tqdm(range(num_batches), desc=f"Generating for {class_name}"):
-
-            # 1. 构造条件标签张量
-            labels_to_gen = torch.full(
-                (gen_batch_size,), class_idx, device=DEVICE, dtype=torch.long)
-
-            # 2. 执行反向扩散采样, ddim OR ddpm
-            batch_samples = diffusion_process.sample_ddim(
-                diffusion_model, gen_batch_size, labels_to_gen)
-
-            with torch.no_grad():
-                preds = baseline_classifier(batch_samples)
-                probs = F.softmax(preds, dim=1)
-                confidences, pred_classes = torch.max(probs, 1)
-                mask = (pred_classes == class_idx) & (
-                    confidences >= CONFIG["confidence_threshold"])
-                filtered_samples = batch_samples[mask]
-
-                if len(filtered_samples) > 0:
-                    current_class_signals.append(filtered_samples.cpu())
-                    class_filtered_count += len(filtered_samples)
-
-        logging.info(
-            f"  - Generated {total_samples}, Filtered to {class_filtered_count} high-confidence samples.")
-
-        # 保存当前类别的样本
-        if len(current_class_signals) > 0:
-            class_signals_tensor = torch.cat(current_class_signals, dim=0)
-            class_labels_tensor = torch.full(
-                (len(class_signals_tensor),), class_idx, dtype=torch.long)
-
-            class_save_path = os.path.join(
-                run_checkpoint_dir, f"generated_class_{class_idx}_{class_name}.pt")
-            torch.save({
-                'signals': class_signals_tensor,
-                'labels': class_labels_tensor
-            }, class_save_path)
-
-            # 添加到总列表
-            generated_signals.extend(current_class_signals)
-            generated_labels.extend([class_idx] * len(class_signals_tensor))
-
-    # 保存生成的样本到磁盘
-    if len(generated_signals) > 0:
-        # 拼接所有生成的信号
-        all_gen_signals = torch.cat(generated_signals, dim=0)
-        all_gen_labels = torch.tensor(generated_labels, dtype=torch.long)
-
-        # 1. 保存为 PyTorch .pt 格式 (方便后续加载训练)
-        pt_save_path = os.path.join(run_checkpoint_dir, "generated_samples.pt")
-        torch.save({
-            'signals': all_gen_signals,
-            'labels': all_gen_labels
-        }, pt_save_path)
-        logging.info(
-            f"Saved {len(all_gen_signals)} generated samples to {pt_save_path}")
-
-        # 2. 保存为 NumPy .npz 格式 (方便画图分析)
-        # np_save_path = os.path.join(
-        #     run_checkpoint_dir, "generated_samples.npz")
-        # np.savez_compressed(np_save_path,
-        #                     signals=all_gen_signals.numpy(),
-        #                     labels=all_gen_labels.numpy())
-        # logging.info(f"Saved NumPy format to {np_save_path}")
-    else:
-        logging.warning("No samples were generated/filtered!")
-        all_gen_signals = torch.empty(0, 2, 1024)
-        all_gen_labels = torch.empty(0, dtype=torch.long)
+    all_gen_signals, all_gen_labels = generate_augmented_dataset(
+        diffusion_model, baseline_classifier, class_map, run_checkpoint_dir)
 
     augmented_signals = torch.cat([X_train, all_gen_signals])
     augmented_labels = torch.cat([y_train, all_gen_labels])
@@ -203,29 +114,22 @@ def main():
     # Step E: 训练并评估增强后的分类器
     logging.info("\n--- Training Augmented Classifier ---")
     augmented_classifier = CNNClassifier().to(DEVICE)
-    augmented_optimizer = torch.optim.Adam(
-        augmented_classifier.parameters(), lr=CONFIG["learning_rate"])
-
-    for epoch in tqdm(range(CONFIG["epochs_classifier"]), desc="Training Augmented Classifier", leave=False):
-        loss = train_classifier(
-            augmented_classifier, augmented_loader, augmented_optimizer, criterion)
-        logging.info(
-            f"Augmented Epoch {epoch+1}/{CONFIG['epochs_classifier']}, Loss: {loss:.4f}")
-
-        if (epoch + 1) % 10 == 0 or (epoch + 1) == CONFIG["epochs_classifier"]:
-            checkpoint_path = os.path.join(
-                run_checkpoint_dir, f"augmented_classifier_epoch_{epoch+1}.pth")
-            torch.save(augmented_classifier.state_dict(), checkpoint_path)
-            logging.info(
-                f"Saved augmented classifier checkpoint to {checkpoint_path}")
-
-    augmented_accuracy = evaluate_classifier(augmented_classifier, test_loader)
+    augmented_accuracy = run_classifier_pipeline(
+        augmented_classifier,
+        augmented_loader,
+        test_loader,
+        CONFIG["epochs_classifier"],
+        CONFIG["learning_rate"],
+        run_checkpoint_dir,
+        "augmented_classifier"
+    )
+    logging.info(f"Augmented Classifier Accuracy: {augmented_accuracy:.2f}%")
 
     # Step F: 结果对比
     logging.info("\n" + "="*30)
     logging.info("---           FINAL RESULTS           ---")
     logging.info("="*30)
-    logging.info(f"Dataset: RadioML 2018.01A (SNR >= 0dB)")
+    logging.info(f"Dataset: RadioML 2018.01A (SNR >= x dB)")
     logging.info(f"Real Training Data Fraction: {train_frac * 100:.1f}%")
     logging.info("-" * 30)
     logging.info(f"Baseline Accuracy: {baseline_accuracy:.2f}%")

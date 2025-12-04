@@ -75,3 +75,29 @@ def evaluate_classifier(model: nn.Module, dataloader: DataLoader) -> float:
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     return 100 * correct / total
+
+
+def run_classifier_pipeline(model: nn.Module, train_loader: DataLoader, test_loader: DataLoader,
+                            epochs: int, learning_rate: float, checkpoint_dir: str,
+                            prefix: str) -> float:
+    """
+    封装分类器的训练和评估流程, 保存了模型检查点
+    """
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = nn.CrossEntropyLoss()
+
+    for epoch in tqdm(range(epochs), desc=f"Training {prefix}", leave=False):
+        loss = train_classifier(
+            model, train_loader, optimizer, criterion)
+        logging.info(
+            f"{prefix} Epoch {epoch+1}/{epochs}, Loss: {loss:.4f}")
+
+        if (epoch + 1) % 10 == 0 or (epoch + 1) == epochs:
+            checkpoint_path = os.path.join(
+                checkpoint_dir, f"{prefix}_epoch_{epoch+1}.pth")
+            torch.save(model.state_dict(), checkpoint_path)
+            logging.info(
+                f"Saved {prefix} checkpoint to {checkpoint_path}")
+
+    accuracy = evaluate_classifier(model, test_loader)
+    return accuracy
