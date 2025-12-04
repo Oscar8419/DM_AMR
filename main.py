@@ -99,7 +99,7 @@ def main():
         logging.info(
             f"Baseline Epoch {epoch+1}/{CONFIG['epochs_classifier']}, Loss: {loss:.4f}")
 
-        if (epoch + 1) % 5 == 0 or (epoch + 1) == CONFIG["epochs_classifier"]:
+        if (epoch + 1) % 10 == 0 or (epoch + 1) == CONFIG["epochs_classifier"]:
             checkpoint_path = os.path.join(
                 run_checkpoint_dir, f"baseline_classifier_epoch_{epoch+1}.pth")
             torch.save(baseline_classifier.state_dict(), checkpoint_path)
@@ -212,7 +212,7 @@ def main():
         logging.info(
             f"Augmented Epoch {epoch+1}/{CONFIG['epochs_classifier']}, Loss: {loss:.4f}")
 
-        if (epoch + 1) % 5 == 0 or (epoch + 1) == CONFIG["epochs_classifier"]:
+        if (epoch + 1) % 10 == 0 or (epoch + 1) == CONFIG["epochs_classifier"]:
             checkpoint_path = os.path.join(
                 run_checkpoint_dir, f"augmented_classifier_epoch_{epoch+1}.pth")
             torch.save(augmented_classifier.state_dict(), checkpoint_path)

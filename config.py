@@ -22,12 +22,12 @@ CONFIG = {
     "signal_length": 1024,          # 信号长度为1024
 
     # --- 扩散模型参数 ---
-    "timesteps": 200,               # DDPM采样步数 (T)
+    "timesteps": 200*5,               # DDPM采样步数和训练最大时间步数, 增大可提升生成质量，但需要更多epoch才能收敛
     "ddim_timesteps": 50,           # DDIM采样步数
     "ddim_eta": 0.0,                # DDIM的eta参数，0.0表示确定性采样
 
     # --- 训练参数 ---
-    "epochs_diffusion": 10,         # 训练扩散模型的轮数
+    "epochs_diffusion": 10*2,         # 训练扩散模型的轮数
     "epochs_classifier": 30,        # 训练分类器的轮数
     "batch_size": 64*64,               # 训练baseline分类器的batch size
     "diffusion_gene_batch_size": 64*10,      # 扩散模型生成时候的batch size
