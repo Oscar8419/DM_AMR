@@ -77,11 +77,11 @@ def evaluate_classifier(model: nn.Module, dataloader: DataLoader) -> float:
     return 100 * correct / total
 
 
-def run_classifier_pipeline(model: nn.Module, train_loader: DataLoader, test_loader: DataLoader,
+def run_classifier_pipeline(model: nn.Module, train_loader: DataLoader,
                             epochs: int, learning_rate: float, checkpoint_dir: str,
-                            prefix: str) -> float:
+                            prefix: str) -> None:
     """
-    封装分类器的训练和评估流程, 保存了模型检查点
+    封装分类器的训练流程, 保存了模型检查点
     """
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
@@ -98,6 +98,3 @@ def run_classifier_pipeline(model: nn.Module, train_loader: DataLoader, test_loa
             torch.save(model.state_dict(), checkpoint_path)
             logging.info(
                 f"Saved {prefix} checkpoint to {checkpoint_path}")
-
-    accuracy = evaluate_classifier(model, test_loader)
-    return accuracy

@@ -15,7 +15,7 @@ else:
 CONFIG = {
     # --- 数据与路径 ---
     "data_path": DATA_PATH,  # RML2018数据集路径
-    "diffusion_model_path": "conditional_diffusion_model_2018.pth",
+    "diffusion_model_path": None,  # 预训练扩散模型路径, None表示不加载
 
     # --- 模型参数 ---
     "num_classes": 24,              # RadioML2018.01A有24种调制类型
@@ -28,9 +28,10 @@ CONFIG = {
 
     # --- 训练参数 ---
     "epochs_diffusion": 10*2,         # 训练扩散模型的轮数
-    "epochs_classifier": 30,        # 训练分类器的轮数
+    "epochs_classifier": 40,        # 训练分类器的轮数
     "batch_size": 64*64,               # 训练baseline分类器的batch size
-    "diffusion_gene_batch_size": 64*10,      # 扩散模型生成时候的batch size
+    "batch_size_train_diffusion": 128,  # 训练扩散模型的batch size
+    "diffusion_gene_batch_size": 64*8,      # 扩散模型生成时候的batch size
     "learning_rate": 1e-3,
 
     # --- 数据增强与评估参数 ---

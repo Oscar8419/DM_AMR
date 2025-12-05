@@ -45,6 +45,10 @@ def generate_augmented_dataset(diffusion_model, baseline_classifier, class_map, 
             batch_samples = diffusion_process.sample_ddim(
                 diffusion_model, gen_batch_size, labels_to_gen)
 
+            # 3. 归一化生成数据, 确保生成的信号功率为1，与训练数据分布一致
+            power = torch.mean(batch_samples**2, dim=(1, 2), keepdim=True) * 2
+            batch_samples = batch_samples / torch.sqrt(power + 1e-8)
+
             with torch.no_grad():
                 preds = baseline_classifier(batch_samples)
                 probs = F.softmax(preds, dim=1)

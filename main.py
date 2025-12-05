@@ -14,7 +14,7 @@ from config import CONFIG, DEVICE
 from data_loader import load_and_preprocess_data
 from models import ConditionalUNet1D, CNNClassifier
 from diffusion import DiffusionProcess
-from trainer import train_diffusion, run_classifier_pipeline
+from trainer import train_diffusion, run_classifier_pipeline, evaluate_classifier
 from utils import generate_augmented_dataset
 
 
@@ -72,16 +72,18 @@ def main():
     # Step B: 训练或加载扩散模型
     diffusion_model_path = CONFIG["diffusion_model_path"]
     diffusion_model = ConditionalUNet1D().to(DEVICE)
-    diffusion_model_path = "/root/code/DM_AMR/checkpoints/11-30--13-41/diffusion_epoch_10.pth"
-    run_checkpoint_dir = "/root/code/DM_AMR/checkpoints/11-30--13-41/"
+    # diffusion_model_path = "/root/code/DM_AMR/checkpoints/11-30--13-41/diffusion_epoch_10.pth"
+    # run_checkpoint_dir = "/root/code/DM_AMR/checkpoints/11-30--13-41/"
+    baseline_classifier_path = None
+    augmented_classifier_path = None
+    # TODO: add classifier path loading later
 
-    if not os.path.exists(diffusion_model_path):
+    if diffusion_model_path is None:
         diffusion_optimizer = torch.optim.Adam(
             diffusion_model.parameters(), lr=CONFIG["learning_rate"])
         diffusion_process = DiffusionProcess()
         train_diffusion(diffusion_model, diffusion_train_loader,
                         diffusion_process, diffusion_optimizer, CONFIG["epochs_diffusion"], checkpoint_dir=run_checkpoint_dir)
-        torch.save(diffusion_model.state_dict(), diffusion_model_path)
     else:
         logging.info(
             f"Loading pre-trained diffusion model from {diffusion_model_path}")
@@ -91,15 +93,21 @@ def main():
     # Step C: 训练并评估基线分类器
     logging.info("\n--- Training Baseline Classifier (on original data) ---")
     baseline_classifier = CNNClassifier().to(DEVICE)
-    baseline_accuracy = run_classifier_pipeline(
-        baseline_classifier,
-        baseline_train_loader,
-        test_loader,
-        CONFIG["epochs_classifier"],
-        CONFIG["learning_rate"],
-        run_checkpoint_dir,
-        "baseline_classifier"
-    )
+    if baseline_classifier_path:
+        logging.info(
+            f"Loading pre-trained baseline classifier from {baseline_classifier_path}")
+        baseline_classifier.load_state_dict(torch.load(
+            baseline_classifier_path, map_location=DEVICE))
+    else:
+        run_classifier_pipeline(
+            baseline_classifier,
+            baseline_train_loader,
+            CONFIG["epochs_classifier"],
+            CONFIG["learning_rate"],
+            run_checkpoint_dir,
+            "baseline_classifier"
+        )
+    baseline_accuracy = evaluate_classifier(baseline_classifier, test_loader)
     logging.info(f"Baseline Classifier Accuracy: {baseline_accuracy:.2f}%")
 
     # Step D: 生成、筛选并创建增强数据集
@@ -114,15 +122,21 @@ def main():
     # Step E: 训练并评估增强后的分类器
     logging.info("\n--- Training Augmented Classifier ---")
     augmented_classifier = CNNClassifier().to(DEVICE)
-    augmented_accuracy = run_classifier_pipeline(
-        augmented_classifier,
-        augmented_loader,
-        test_loader,
-        CONFIG["epochs_classifier"],
-        CONFIG["learning_rate"],
-        run_checkpoint_dir,
-        "augmented_classifier"
-    )
+    if augmented_classifier_path:
+        logging.info(
+            f"Loading pre-trained augmented classifier from {augmented_classifier_path}")
+        augmented_classifier.load_state_dict(torch.load(
+            augmented_classifier_path, map_location=DEVICE))
+    else:
+        run_classifier_pipeline(
+            augmented_classifier,
+            augmented_loader,
+            CONFIG["epochs_classifier"],
+            CONFIG["learning_rate"],
+            run_checkpoint_dir,
+            "augmented_classifier"
+        )
+    augmented_accuracy = evaluate_classifier(augmented_classifier, test_loader)
     logging.info(f"Augmented Classifier Accuracy: {augmented_accuracy:.2f}%")
 
     # Step F: 结果对比
