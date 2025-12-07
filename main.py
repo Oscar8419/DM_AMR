@@ -1,18 +1,15 @@
 # main.py
 
 import torch
-import torch.nn as nn
 import os
 import logging
 import numpy as np
 from datetime import datetime
 from torch.utils.data import TensorDataset, DataLoader
-import torch.nn.functional as F
-from tqdm import tqdm
 
 from config import CONFIG, DEVICE
 from data_loader import load_and_preprocess_data
-from models import ConditionalUNet1D, CNNClassifier
+from models import get_diffusion_model, get_classifier_model
 from diffusion import DiffusionProcess
 from trainer import train_diffusion, run_classifier_pipeline, evaluate_classifier
 from utils import generate_augmented_dataset
@@ -71,12 +68,12 @@ def main():
 
     # Step B: 训练或加载扩散模型
     diffusion_model_path = CONFIG["diffusion_model_path"]
-    diffusion_model = ConditionalUNet1D().to(DEVICE)
+    diffusion_model = get_diffusion_model(
+        CONFIG["diffusion_model_type"]).to(DEVICE)
     # diffusion_model_path = "/root/code/DM_AMR/checkpoints/11-30--13-41/diffusion_epoch_10.pth"
     # run_checkpoint_dir = "/root/code/DM_AMR/checkpoints/11-30--13-41/"
     baseline_classifier_path = None
     augmented_classifier_path = None
-    # TODO: add classifier path loading later
 
     if diffusion_model_path is None:
         diffusion_optimizer = torch.optim.Adam(
@@ -92,7 +89,8 @@ def main():
 
     # Step C: 训练并评估基线分类器
     logging.info("\n--- Training Baseline Classifier (on original data) ---")
-    baseline_classifier = CNNClassifier().to(DEVICE)
+    baseline_classifier = get_classifier_model(
+        CONFIG["classifier_model_type"]).to(DEVICE)
     if baseline_classifier_path:
         logging.info(
             f"Loading pre-trained baseline classifier from {baseline_classifier_path}")
@@ -121,7 +119,8 @@ def main():
 
     # Step E: 训练并评估增强后的分类器
     logging.info("\n--- Training Augmented Classifier ---")
-    augmented_classifier = CNNClassifier().to(DEVICE)
+    augmented_classifier = get_classifier_model(
+        CONFIG["classifier_model_type"]).to(DEVICE)
     if augmented_classifier_path:
         logging.info(
             f"Loading pre-trained augmented classifier from {augmented_classifier_path}")

@@ -18,6 +18,8 @@ CONFIG = {
     "diffusion_model_path": None,  # 预训练扩散模型路径, None表示不加载
 
     # --- 模型参数 ---
+    "diffusion_model_type": "unet1d",  # 扩散模型类型: 'unet1d'
+    "classifier_model_type": "gru",   # 分类器模型类型: 'cnn', 'gru'
     "num_classes": 24,              # RadioML2018.01A有24种调制类型
     "signal_length": 1024,          # 信号长度为1024
 

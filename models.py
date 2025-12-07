@@ -134,3 +134,67 @@ class CNNClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.fc_stack(self.conv_stack(x))
+
+
+class GRU(nn.Module):
+    def __init__(self, input_dim=16, hidden_size=128, num_classes=24, bidire=False):
+        super().__init__()
+        self.input_dim = input_dim
+
+        # 双向GRU层配置
+        self.gru1 = nn.GRU(
+            input_size=input_dim,
+            hidden_size=hidden_size,
+            num_layers=1,
+            batch_first=True,    # 输入格式为(batch, seq_len, input_size)
+            bidirectional=bidire
+        )
+
+        self.gru2 = nn.GRU(
+            input_size=hidden_size * 2 if bidire else hidden_size,
+            hidden_size=hidden_size,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=bidire
+        )
+
+        # 全连接层
+        if bidire:
+            self.fc = nn.Linear(2*hidden_size, num_classes)
+        else:
+            self.fc = nn.Linear(hidden_size, num_classes)
+
+    def forward(self, x: torch.Tensor):
+        # shape=[N, 2, 1024]
+        # 输入形状: [batch_size, seq_len, input_dim]
+        # x = x.reshape(x.size(0),-1, self.input_dim)
+        batch_size = x.size(0)
+        x = x.reshape(batch_size, 2, -1, self.input_dim//2).transpose(-2, -
+                                                                      3).contiguous().reshape(batch_size, -1, self.input_dim)
+
+        # 第一层GRU（返回所有时间步输出）
+        gru1_out, _ = self.gru1(x)  # out shape:
+
+        # 第二层GRU（仅返回最后时间步）
+        gru2_out, _ = self.gru2(gru1_out)  # out shape:
+        last_output = gru2_out[:, -1, :]    # 取最后时间步 [batch, 128]
+
+        # 全连接层
+        out = self.fc(last_output)
+        return out
+
+
+def get_diffusion_model(model_type: str, **kwargs):
+    if model_type == "unet1d":
+        return ConditionalUNet1D(**kwargs)
+    else:
+        raise ValueError(f"Unknown diffusion model type: {model_type}")
+
+
+def get_classifier_model(model_type: str, **kwargs):
+    if model_type == "cnn":
+        return CNNClassifier(**kwargs)
+    elif model_type == "gru":
+        return GRU(**kwargs)
+    else:
+        raise ValueError(f"Unknown classifier model type: {model_type}")
