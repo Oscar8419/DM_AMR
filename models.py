@@ -184,9 +184,231 @@ class GRU(nn.Module):
         return out
 
 
+# --- DiT Components ---
+
+def modulate(x, shift, scale):
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+
+class PatchEmbed1D(nn.Module):
+    """ 1D Image to Patch Embedding """
+
+    def __init__(self, signal_length=1024, patch_size=16, in_chans=2, embed_dim=768):
+        super().__init__()
+        num_patches = signal_length // patch_size
+        self.proj = nn.Conv1d(in_chans, embed_dim,
+                              kernel_size=patch_size, stride=patch_size)
+        self.num_patches = num_patches
+
+    def forward(self, x):
+        # x: (B, C, L)
+        x = self.proj(x)  # (B, D, N)
+        x = x.transpose(1, 2)  # (B, N, D)
+        return x
+
+
+class DiTBlock(nn.Module):
+    """
+    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
+    """
+
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **kwargs):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(
+            hidden_size, elementwise_affine=False, eps=1e-6)
+        self.attn = nn.MultiheadAttention(
+            hidden_size, num_heads, batch_first=True)
+        self.norm2 = nn.LayerNorm(
+            hidden_size, elementwise_affine=False, eps=1e-6)
+        mlp_hidden_dim = int(hidden_size * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_size, mlp_hidden_dim),
+            nn.GELU(),
+            nn.Linear(mlp_hidden_dim, hidden_size),
+        )
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 6 * hidden_size, bias=True)
+        )
+
+    def forward(self, x, c):
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(
+            c).chunk(6, dim=1)
+
+        # Attention
+        x_norm1 = modulate(self.norm1(x), shift_msa, scale_msa)
+        attn_out, _ = self.attn(x_norm1, x_norm1, x_norm1)
+        x = x + gate_msa.unsqueeze(1) * attn_out
+
+        # MLP
+        x_norm2 = modulate(self.norm2(x), shift_mlp, scale_mlp)
+        mlp_out = self.mlp(x_norm2)
+        x = x + gate_mlp.unsqueeze(1) * mlp_out
+        return x
+
+
+class FinalLayer(nn.Module):
+    """
+    The final layer of DiT.
+    """
+
+    def __init__(self, hidden_size, patch_size, out_channels):
+        super().__init__()
+        self.norm_final = nn.LayerNorm(
+            hidden_size, elementwise_affine=False, eps=1e-6)
+        self.linear = nn.Linear(
+            hidden_size, patch_size * out_channels, bias=True)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 2 * hidden_size, bias=True)
+        )
+        self.patch_size = patch_size
+        self.out_channels = out_channels
+
+    def forward(self, x, c):
+        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
+        x = modulate(self.norm_final(x), shift, scale)
+        x = self.linear(x)
+        return x
+
+
+def get_1d_sincos_pos_embed(embed_dim, length):
+    """
+    embed_dim: output dimension for each position
+    length: number of positions to be encoded
+    """
+    import numpy as np
+    if embed_dim % 2 != 0:
+        raise ValueError("Embed dim must be divisible by 2")
+
+    grid = np.arange(length, dtype=np.float32)
+    omega = np.arange(embed_dim // 2, dtype=np.float32)
+    omega /= embed_dim / 2.
+    omega = 1. / 10000**omega  # (D/2,)
+
+    out = np.einsum('m,d->md', grid, omega)  # (L, D/2)
+
+    emb_sin = np.sin(out)  # (L, D/2)
+    emb_cos = np.cos(out)  # (L, D/2)
+
+    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (L, D)
+    return emb
+
+
+class DiffusionTransformer(nn.Module):
+    def __init__(
+        self,
+        signal_length=CONFIG["signal_length"],
+        patch_size=16,
+        in_channels=2,
+        hidden_size=384,
+        depth=12//2,
+        num_heads=6,
+        mlp_ratio=4.0,
+        class_dropout_prob=0.1,
+        num_classes=CONFIG["num_classes"],
+        learn_sigma=False,
+    ):
+        super().__init__()
+        self.learn_sigma = learn_sigma
+        self.in_channels = in_channels
+        self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.patch_size = patch_size
+        self.num_heads = num_heads
+
+        self.x_embedder = PatchEmbed1D(
+            signal_length, patch_size, in_channels, hidden_size)
+        self.t_embedder = nn.Sequential(
+            SinusoidalPositionEmbeddings(hidden_size),
+            nn.Linear(hidden_size, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+        self.y_embedder = nn.Embedding(num_classes, hidden_size)
+
+        num_patches = self.x_embedder.num_patches
+        # Will use fixed sin-cos embedding:
+        self.pos_embed = nn.Parameter(torch.zeros(
+            1, num_patches, hidden_size), requires_grad=False)
+
+        self.blocks = nn.ModuleList([
+            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
+        ])
+        self.final_layer = FinalLayer(
+            hidden_size, patch_size, self.out_channels)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        self.apply(_basic_init)
+
+        # Initialize (and freeze) pos_embed by sin-cos embedding:
+        pos_embed = get_1d_sincos_pos_embed(
+            self.pos_embed.shape[-1], self.x_embedder.num_patches)
+        self.pos_embed.data.copy_(
+            torch.from_numpy(pos_embed).float().unsqueeze(0))
+
+        # Initialize patch_embed like nn.Linear (instead of nn.Conv2d):
+        w = self.x_embedder.proj.weight.data
+        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        nn.init.constant_(self.x_embedder.proj.bias, 0)
+
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blocks:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+        # Zero-out output layers:
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer.linear.weight, 0)
+        nn.init.constant_(self.final_layer.linear.bias, 0)
+
+    def unpatchify(self, x):
+        """
+        x: (N, T, patch_size * out_channels)
+        imgs: (N, out_channels, L)
+        """
+        c = self.out_channels
+        p = self.patch_size
+        h = x.shape[1]  # num_patches
+
+        x = x.reshape(shape=(x.shape[0], h, p, c))
+        x = torch.einsum('nhpc->ncph', x)
+        imgs = x.reshape(shape=(x.shape[0], c, h * p))
+        return imgs
+
+    def forward(self, x, t, y):
+        """
+        x: (N, C, L)
+        t: (N,)
+        y: (N,)
+        """
+        x = self.x_embedder(
+            x) + self.pos_embed  # (N, T, D), where T = L/patch_size
+        t = self.t_embedder(t)                   # (N, D)
+        y = self.y_embedder(y)                   # (N, D)
+        c = t + y                                # (N, D)
+
+        for block in self.blocks:
+            x = block(x, c)                      # (N, T, D)
+
+        # (N, T, patch_size * out_channels)
+        x = self.final_layer(x, c)
+        x = self.unpatchify(x)                   # (N, out_channels, L)
+        return x
+
+
 def get_diffusion_model(model_type: str, **kwargs):
     if model_type == "unet1d":
         return ConditionalUNet1D(**kwargs)
+    elif model_type == "dit":
+        return DiffusionTransformer(**kwargs)
     else:
         raise ValueError(f"Unknown diffusion model type: {model_type}")
 
