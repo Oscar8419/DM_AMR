@@ -71,7 +71,8 @@ class ConditionalUNet1D(nn.Module):
         dim = 64  # TODO: ? hardcode
         self.time_mlp = nn.Sequential(SinusoidalPositionEmbeddings(
             dim), nn.Linear(dim, dim * 4), nn.SiLU(), nn.Linear(dim * 4, dim * 4))
-        self.class_emb = nn.Embedding(num_classes, dim * 4)
+        # +1 for null token (CFG)
+        self.class_emb = nn.Embedding(num_classes + 1, dim * 4)
         self.init_conv = nn.Conv1d(2, dim, 3, padding=1)
         self.down1 = ResBlock(dim, 128, dim * 4, dim * 4)
         self.down_conv1 = nn.Conv1d(128, 128, 3, stride=2, padding=1)
@@ -301,9 +302,9 @@ class DiffusionTransformer(nn.Module):
         signal_length=CONFIG["signal_length"],
         patch_size=16,
         in_channels=2,
-        hidden_size=384,
-        depth=12//2,
-        num_heads=6,
+        hidden_size=128,
+        depth=4,
+        num_heads=4,
         mlp_ratio=4.0,
         class_dropout_prob=0.1,
         num_classes=CONFIG["num_classes"],
@@ -324,7 +325,8 @@ class DiffusionTransformer(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden_size, hidden_size),
         )
-        self.y_embedder = nn.Embedding(num_classes, hidden_size)
+        # +1 for null token (CFG)
+        self.y_embedder = nn.Embedding(num_classes + 1, hidden_size)
 
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:

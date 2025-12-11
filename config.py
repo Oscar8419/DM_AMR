@@ -27,13 +27,15 @@ CONFIG = {
     "timesteps": 200*5,               # DDPM采样步数和训练最大时间步数, 增大可提升生成质量，但需要更多epoch才能收敛
     "ddim_timesteps": 50,           # DDIM采样步数
     "ddim_eta": 0.0,                # DDIM的eta参数，0.0表示确定性采样
+    "cfg_scale": 3.0,               # Classifier-Free Guidance 尺度 (w > 1)
+    "p_uncond": 0.1,                # 训练时 Label Dropout 概率 (10%)
 
     # --- 训练参数 ---
-    "epochs_diffusion": 10*2,         # 训练扩散模型的轮数
+    "epochs_diffusion": 10*5,         # 训练扩散模型的轮数
     "epochs_classifier": 40,        # 训练分类器的轮数
     "batch_size": 64*64,               # 训练baseline分类器的batch size
-    "batch_size_train_diffusion": 128,  # 训练扩散模型的batch size
-    "diffusion_gene_batch_size": 64*8,      # 扩散模型生成时候的batch size
+    "batch_size_train_diffusion": 64,  # 训练扩散模型的batch size
+    "diffusion_gene_batch_size": 64*4,      # 扩散模型生成时候的batch size
     "learning_rate": 1e-3,
 
     # --- 数据增强与评估参数 ---

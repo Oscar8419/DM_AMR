@@ -83,50 +83,60 @@ class DiffusionProcess:
         return img
 
     @torch.no_grad()
-    def sample_ddim(self, model: nn.Module, num_samples: int, classes: torch.Tensor, ddim_timesteps: int = CONFIG["ddim_timesteps"], eta: float = CONFIG["ddim_eta"]) -> torch.Tensor:
+    def sample_ddim(self, model: nn.Module, num_samples: int, classes: torch.Tensor, ddim_timesteps: int = CONFIG["ddim_timesteps"], eta: float = CONFIG["ddim_eta"], cfg_scale: float = CONFIG["cfg_scale"]) -> torch.Tensor:
         """
-        DDIM Sampling.
-        Args:
-            ddim_timesteps: Number of steps for DDIM sampling (e.g., 50 or 100).
-            eta: 0.0 for deterministic DDIM, 1.0 for DDPM-like stochasticity.
+        DDIM Sampling with Classifier-Free Guidance (CFG).
         """
         shape = (num_samples, 2, CONFIG["signal_length"])
         img = torch.randn(shape, device=DEVICE)
 
-        # 生成时间步序列 (e.g., [0, 20, 40, ..., 980])
-        # 使用简单的均匀间隔采样
+        # 生成时间步序列
         c = self.timesteps // ddim_timesteps
         time_steps = list(range(0, self.timesteps, c)) + [self.timesteps - 1]
-        # 确保只取 ddim_timesteps 个点，并反转顺序
         time_steps = time_steps[:ddim_timesteps]
         time_steps = list(reversed(time_steps))
 
-        for i in tqdm(range(len(time_steps)), desc="DDIM Sampling", total=len(time_steps), leave=False):
+        # 构造空标签 (Null Token)
+        classes_null = torch.full_like(classes, CONFIG["num_classes"])
+
+        for i in tqdm(range(len(time_steps)), desc="DDIM Sampling (CFG)", total=len(time_steps), leave=False):
             t = time_steps[i]
             prev_t = time_steps[i+1] if i < len(time_steps) - 1 else -1
 
             t_tensor = torch.full(
                 (num_samples,), t, device=DEVICE, dtype=torch.long)
 
-            # 1. 预测噪声
-            noise_pred = model(img, t_tensor, classes)
+            # --- CFG Prediction ---
+            # 1. 构造 Batch: [Conditional, Unconditional]
+            # 为了效率，我们将两次推理合并为一个 Batch
+            x_in = torch.cat([img, img])
+            t_in = torch.cat([t_tensor, t_tensor])
+            c_in = torch.cat([classes, classes_null])
 
+            # 2. 模型前向传播
+            noise_pred_batch = model(x_in, t_in, c_in)
+            noise_pred_cond, noise_pred_uncond = noise_pred_batch.chunk(2)
+
+            # 3. 线性组合: eps = eps_uncond + w * (eps_cond - eps_uncond)
+            noise_pred = noise_pred_uncond + cfg_scale * \
+                (noise_pred_cond - noise_pred_uncond)
+
+            # --- DDIM Step ---
             # 2. 计算 alpha_bar
             alpha_bar_t = self.alphas_cumprod[t]
             alpha_bar_prev = self.alphas_cumprod[prev_t] if prev_t >= 0 else torch.tensor(
                 1.0, device=DEVICE)
 
             # 3. 预测 x0 (denoised)
-            # x0 = (xt - sqrt(1-alpha_bar_t) * noise_pred) / sqrt(alpha_bar_t)
             pred_x0 = (img - torch.sqrt(1 - alpha_bar_t) *
                        noise_pred) / torch.sqrt(alpha_bar_t)
 
-            # 4. 计算方向指向 xt (direction pointing to xt)
+            # 4. 计算方向指向 xt
             sigma_t = eta * torch.sqrt((1 - alpha_bar_prev) /
                                        (1 - alpha_bar_t) * (1 - alpha_bar_t / alpha_bar_prev))
             dir_xt = torch.sqrt(1 - alpha_bar_prev - sigma_t**2) * noise_pred
 
-            # 5. 更新 x (x_{t-1})
+            # 5. 更新 x
             noise = torch.randn_like(img) if eta > 0 else 0.
             img = torch.sqrt(alpha_bar_prev) * pred_x0 + \
                 dir_xt + sigma_t * noise

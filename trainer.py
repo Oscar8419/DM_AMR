@@ -22,6 +22,12 @@ def train_diffusion(model: nn.Module, dataloader: DataLoader, diffusion_process:
             optimizer.zero_grad()
 
             signals, labels = signals.to(DEVICE), labels.to(DEVICE)
+
+            # --- Label Dropout for CFG ---
+            # 生成一个与 labels 形状相同的随机掩码，概率为 p_uncond
+            mask = torch.rand(labels.shape, device=DEVICE) < CONFIG["p_uncond"]
+            labels[mask] = CONFIG["num_classes"]
+
             t = torch.randint(0, CONFIG["timesteps"],
                               (signals.shape[0],), device=DEVICE).long()
             noise = torch.randn_like(signals)
@@ -39,8 +45,8 @@ def train_diffusion(model: nn.Module, dataloader: DataLoader, diffusion_process:
         avg_loss = total_loss / len(dataloader)
         logging.info(f"Epoch {epoch+1} Average Loss: {avg_loss:.4f}")
 
-        # Save checkpoint every 5 epochs
-        if (epoch + 1) % 5 == 0 or (epoch + 1) == epochs:
+        # Save checkpoint every 10 epochs
+        if (epoch + 1) % 10 == 0 or (epoch + 1) == epochs:
             checkpoint_path = os.path.join(
                 checkpoint_dir, f"diffusion_epoch_{epoch+1}.pth")
             torch.save(model.state_dict(), checkpoint_path)
