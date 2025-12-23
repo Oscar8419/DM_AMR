@@ -238,7 +238,8 @@ class DiTBlock(nn.Module):
 
         # Attention
         x_norm1 = modulate(self.norm1(x), shift_msa, scale_msa)
-        attn_out, _ = self.attn(x_norm1, x_norm1, x_norm1)
+        # need_weights=False 节省显存，因为我们不需要注意力图
+        attn_out, _ = self.attn(x_norm1, x_norm1, x_norm1, need_weights=False)
         x = x + gate_msa.unsqueeze(1) * attn_out
 
         # MLP

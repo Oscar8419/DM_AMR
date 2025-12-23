@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 import logging
 import os
@@ -14,6 +15,8 @@ from diffusion import DiffusionProcess
 def train_diffusion(model: nn.Module, dataloader: DataLoader, diffusion_process: DiffusionProcess, optimizer: torch.optim.Optimizer, epochs: int, checkpoint_dir: str = "checkpoints") -> None:
     logging.info("Start training diffusion model...")
     # os.makedirs(checkpoint_dir, exist_ok=True)
+
+    scaler = GradScaler()
 
     for epoch in range(epochs):
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
@@ -33,14 +36,20 @@ def train_diffusion(model: nn.Module, dataloader: DataLoader, diffusion_process:
             noise = torch.randn_like(signals)
 
             x_t = diffusion_process.q_sample(x_start=signals, t=t, noise=noise)
-            predicted_noise = model(x_t, t, labels)
 
-            loss = F.mse_loss(noise, predicted_noise)
-            loss.backward()
-            optimizer.step()
+            with autocast():
+                predicted_noise = model(x_t, t, labels)
+                loss = F.mse_loss(noise, predicted_noise)
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             total_loss += loss.item()
             progress_bar.set_postfix({"loss": loss.item()})
+
+        # 显存清理
+        torch.cuda.empty_cache()
 
         avg_loss = total_loss / len(dataloader)
         logging.info(f"Epoch {epoch+1} Average Loss: {avg_loss:.4f}")
