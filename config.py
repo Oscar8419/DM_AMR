@@ -39,11 +39,11 @@ CONFIG = {
     "learning_rate": 1e-3,
 
     # --- 数据增强与评估参数 ---
-    "confidence_threshold": 0.8,    # 筛选生成样本的置信度阈值
+    "confidence_threshold": 0.2,    # 筛选生成样本的置信度阈值
     # 每类生成的样本数 TODO:increase/decrease number later to see effect or lower memory usage
     "num_generated_samples_per_class": 5 * 1000,
     # "train_data_fraction": 1.0,      # 使用的真实训练数据比例 (1.0代表全部，0.5代表50%)
-    "train_fraction": 0.2,  # 每种组合4096个样本，训练集比例, 不完全使用，模拟小样本场景
+    "train_fraction": 0.5,  # 每种组合4096个样本，训练集比例, 不完全使用，模拟小样本场景
     "test_fraction": 0.2,  # 每种组合4096个样本，测试集比例
     "diffusion_snr_start": 6,  # 从这个SNR开始训练扩散模型
 

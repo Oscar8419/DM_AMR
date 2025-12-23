@@ -300,13 +300,12 @@ class DiffusionTransformer(nn.Module):
     def __init__(
         self,
         signal_length=CONFIG["signal_length"],
-        patch_size=16,
+        patch_size=8,
         in_channels=2,
-        hidden_size=128,
-        depth=4,
-        num_heads=4,
+        hidden_size=384,
+        depth=6,
+        num_heads=6,
         mlp_ratio=4.0,
-        class_dropout_prob=0.1,
         num_classes=CONFIG["num_classes"],
         learn_sigma=False,
     ):
@@ -382,8 +381,8 @@ class DiffusionTransformer(nn.Module):
 
         x = x.reshape(shape=(x.shape[0], h, p, c))
         x = torch.einsum('nhpc->ncph', x)
-        imgs = x.reshape(shape=(x.shape[0], c, h * p))
-        return imgs
+        signal = x.reshape(shape=(x.shape[0], c, h * p))
+        return signal
 
     def forward(self, x, t, y):
         """
